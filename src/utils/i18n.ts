@@ -30,6 +30,9 @@ export const translations = {
         tatemaeResult: "Tatemae (Result)",
         placeholderTune: "Type your rough draft here... (e.g. 'I can't do tuesday')",
         placeholderDecode: "Paste the polite text you want to decode...",
+        history: "History",
+        clearHistory: "Clear",
+        noHistory: "No history yet.",
 
         // Modes
         casual: "Casual",
@@ -64,6 +67,9 @@ export const translations = {
         tatemaeResult: "建前 (結果)",
         placeholderTune: "下書きを入力してください... (例: '火曜は無理')",
         placeholderDecode: "解読したい建前文を貼り付けてください...",
+        history: "履歴",
+        clearHistory: "消去",
+        noHistory: "履歴はありません。",
 
         // Modes
         casual: "カジュアル",

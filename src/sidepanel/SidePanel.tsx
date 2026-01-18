@@ -1,12 +1,17 @@
 /// <reference types="chrome" />
-import React, { useState } from 'react';
-import { PenLine, Sparkles, AlertCircle, Copy, Check } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { PenLine, Sparkles, AlertCircle, Copy, Check, History, Trash2 } from 'lucide-react';
 import { validateInput } from '../utils/security';
 import { getAIConfig, tuneText } from '../services/ai';
 import { useTranslation } from '../utils/i18n';
 import clsx from 'clsx';
-// If clsx isn't installed, I'll just use template literals for now to be safe, 
-// checking package.json... clsx IS in package.json.
+
+interface HistoryItem {
+    id: string;
+    input: string;
+    output: string;
+    mode: 'casual' | 'polite' | 'formal' | 'kyoto' | 'decode';
+}
 
 export default function SidePanel() {
     const [input, setInput] = useState('');
@@ -15,130 +20,64 @@ export default function SidePanel() {
     const [error, setError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [copied, setCopied] = useState(false);
+    const [history, setHistory] = useState<HistoryItem[]>([]);
+    const [showHistory, setShowHistory] = useState(false);
 
-    // Storage Listener for Pending Actions (Handoff from Background)
-    React.useEffect(() => {
-        const processAction = (action: any) => {
-            if (!action) return;
-
-            if (action.type === 'DECODE_SELECTION') {
-                setInput(action.text);
-                setMode('decode');
-                setShouldAutoTune(true);
-            } else if (action.type === 'TUNE_SELECTION') {
-                setInput(action.text);
-                // Load last used tune mode or default to polite
-                if (chrome.storage) {
-                    chrome.storage.local.get(['lastTuneMode']).then((result) => {
-                        const targetMode = (result.lastTuneMode as 'casual' | 'polite' | 'formal' | 'kyoto') || 'polite';
-                        setMode(targetMode);
-                        setShouldAutoTune(true);
-                    });
-                } else {
-                    setMode('polite');
-                    setShouldAutoTune(true);
-                }
-            }
-        };
-
-        // 1. Check storage on mount (if panel was just opened)
+    // Load history from storage on mount
+    useEffect(() => {
         if (chrome.storage) {
-            chrome.storage.local.get(['pendingAction']).then((result) => {
-                if (result.pendingAction) {
-                    processAction(result.pendingAction);
-                    // Clear it so we don't re-process on reload unless needed
-                    chrome.storage.local.remove('pendingAction');
+            chrome.storage.local.get(['conversationHistory']).then((result) => {
+                if (Array.isArray(result.conversationHistory)) {
+                    setHistory(result.conversationHistory);
                 }
             });
-
-            // 2. Listen for changes (if panel was ALREADY open)
-            const storageListener = (changes: { [key: string]: chrome.storage.StorageChange }) => {
-                if (changes.pendingAction && changes.pendingAction.newValue) {
-                    processAction(changes.pendingAction.newValue);
-                    // Just consuming is enough. 
-                    chrome.storage.local.remove('pendingAction');
-                }
-            };
-            chrome.storage.onChanged.addListener(storageListener);
-            return () => chrome.storage.onChanged.removeListener(storageListener);
         }
     }, []);
+    
+    const processAndSaveHistory = (input: string, output: string, mode: 'casual' | 'polite' | 'formal' | 'kyoto' | 'decode') => {
+        setHistory(prevHistory => {
+            const newItem: HistoryItem = { id: Date.now().toString(), input, output, mode };
+            const newHistory = [newItem, ...prevHistory].slice(0, 20); // Keep last 20
 
-    // Auto-Tune Effect
-    const [shouldAutoTune, setShouldAutoTune] = useState(false);
-
-    React.useEffect(() => {
-        if (shouldAutoTune && input) {
-            handleTune();
-            setShouldAutoTune(false);
-        }
-    }, [shouldAutoTune, input, mode]); // Depend on input/mode to ensure state is ready
-
-    // Persist Tune Mode
-    const handleModeChange = (newMode: 'casual' | 'polite' | 'formal' | 'kyoto' | 'decode') => {
-        setMode(newMode);
-        if (newMode !== 'decode') {
             if (chrome.storage) {
-                chrome.storage.local.set({ lastTuneMode: newMode });
+                chrome.storage.local.set({ conversationHistory: newHistory });
             }
-            lastTuneModeRef.current = newMode;
-        }
+            return newHistory;
+        });
     };
-
-    // Keep track of last tune mode for Tab Switching
-    const lastTuneModeRef = React.useRef<'casual' | 'polite' | 'formal' | 'kyoto'>('polite');
-
-    // Initialize lastTuneMode on load
-    React.useEffect(() => {
-        if (chrome.storage) {
-            chrome.storage.local.get(['lastTuneMode']).then((result: { lastTuneMode?: 'casual' | 'polite' | 'formal' | 'kyoto' }) => {
-                if (result.lastTuneMode) {
-                    lastTuneModeRef.current = result.lastTuneMode;
-                    // If we start in default 'polite', maybe switch to last used? 
-                    // User didn't ask for app-open persistence, only context menu persistence, 
-                    // but it's good UX. Let's stick to simple for now.
-                    if (mode === 'polite') setMode(result.lastTuneMode);
-                }
-            });
-        }
-    }, []);
-
-    // Character Count
-    const charCount = input.length;
-    const maxChars = 200;
-
+    
     const handleTune = async () => {
         setError(null);
         setOutput('');
         setIsLoading(true);
-
+        let currentOutput = '';
+    
         try {
-            // 1. Security Check
             validateInput(input);
-
-            // 2. Config Check
             const config = await getAIConfig();
             if (!config) {
                 setError("Please set your API Key in the extension settings (Popup).");
                 setIsLoading(false);
                 return;
             }
-
-            // 3. Real API Call (Streaming)
+    
             await tuneText(input, mode, config, (chunk) => {
                 if (chunk.startsWith("Error:")) {
                     setError(chunk);
                 } else {
+                    currentOutput += chunk;
                     setOutput((prev) => prev + chunk);
                 }
             });
-
+    
+            // When streaming is done, save the final result to history
+            if (!error && currentOutput) {
+                processAndSaveHistory(input, currentOutput, mode);
+            }
+    
         } catch (err: any) {
             console.error("Sidepanel tune failed:", err);
-            // The streaming function `tuneText` now throws errors after sending an error chunk.
-            // We can use that chunk to set the error state, so we might not need generic messages here
-            // unless the throw happens before any chunk is sent (e.g., network error).
-            if (!error) { // Only set a generic error if a specific one hasn't been streamed
+            if (!error) {
                 if (err.message.includes("API Key")) {
                     setError("Invalid API Key. Please check your settings.");
                 } else if (err.message.includes("Failed to fetch")) {
@@ -152,6 +91,86 @@ export default function SidePanel() {
         }
     };
 
+    const clearHistory = () => {
+        setHistory([]);
+        if (chrome.storage) {
+            chrome.storage.local.remove('conversationHistory');
+        }
+    };
+
+    // Auto-Tune Effect and other listeners... (keep them as they are)
+    const [shouldAutoTune, setShouldAutoTune] = useState(false);
+    useEffect(() => {
+        const processAction = (action: any) => {
+            if (!action) return;
+
+            if (action.type === 'DECODE_SELECTION') {
+                setInput(action.text);
+                setMode('decode');
+                setShouldAutoTune(true);
+            } else if (action.type === 'TUNE_SELECTION') {
+                setInput(action.text);
+                if (chrome.storage) {
+                    chrome.storage.local.get(['lastTuneMode']).then((result) => {
+                        const targetMode = (result.lastTuneMode as 'casual' | 'polite' | 'formal' | 'kyoto') || 'polite';
+                        setMode(targetMode);
+                        setShouldAutoTune(true);
+                    });
+                } else {
+                    setMode('polite');
+                    setShouldAutoTune(true);
+                }
+            }
+        };
+
+        if (chrome.storage) {
+            chrome.storage.local.get(['pendingAction']).then((result) => {
+                if (result.pendingAction) {
+                    processAction(result.pendingAction);
+                    chrome.storage.local.remove('pendingAction');
+                }
+            });
+            const storageListener = (changes: { [key: string]: chrome.storage.StorageChange }) => {
+                if (changes.pendingAction && changes.pendingAction.newValue) {
+                    processAction(changes.pendingAction.newValue);
+                    chrome.storage.local.remove('pendingAction');
+                }
+            };
+            chrome.storage.onChanged.addListener(storageListener);
+            return () => chrome.storage.onChanged.removeListener(storageListener);
+        }
+    }, []);
+    
+    useEffect(() => {
+        if (shouldAutoTune && input) {
+            handleTune();
+            setShouldAutoTune(false);
+        }
+    }, [shouldAutoTune, input, mode]);
+
+    const handleModeChange = (newMode: 'casual' | 'polite' | 'formal' | 'kyoto' | 'decode') => {
+        setMode(newMode);
+        if (newMode !== 'decode') {
+            if (chrome.storage) chrome.storage.local.set({ lastTuneMode: newMode });
+            lastTuneModeRef.current = newMode;
+        }
+    };
+
+    const lastTuneModeRef = React.useRef<'casual' | 'polite' | 'formal' | 'kyoto'>('polite');
+    useEffect(() => {
+        if (chrome.storage) {
+            chrome.storage.local.get(['lastTuneMode']).then((result: { lastTuneMode?: 'casual' | 'polite' | 'formal' | 'kyoto' }) => {
+                if (result.lastTuneMode) {
+                    lastTuneModeRef.current = result.lastTuneMode;
+                    if (mode === 'polite') setMode(result.lastTuneMode);
+                }
+            });
+        }
+    }, []);
+
+    const charCount = input.length;
+    const maxChars = 200;
+
     const copyToClipboard = () => {
         if (!output) return;
         navigator.clipboard.writeText(output);
@@ -162,16 +181,24 @@ export default function SidePanel() {
     const { t } = useTranslation();
 
     return (
-        <div className="w-full min-h-screen bg-slate-50 text-slate-900 p-4 font-sans flex flex-col">
-            {/* Header */}
-            <div className="flex items-center gap-2 mb-6">
-                <div className="p-2 bg-indigo-600 rounded-lg text-white">
-                    <PenLine size={20} />
+        <div className="w-full min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col">
+            <div className='p-4'>
+                <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center gap-2">
+                        <div className="p-2 bg-indigo-600 rounded-lg text-white">
+                            <PenLine size={20} />
+                        </div>
+                        <h1 className="text-xl font-bold tracking-tight text-slate-800">Tatemae Tuner</h1>
+                    </div>
+                    <button onClick={() => setShowHistory(!showHistory)} className="text-slate-400 hover:text-indigo-600 p-2 rounded-full">
+                        <History size={18} />
+                    </button>
                 </div>
-                <h1 className="text-xl font-bold tracking-tight text-slate-800">Tatemae Tuner</h1>
-            </div>
 
-            {/* Mode Switcher (Top Level) */}
+                {/* Main Panel */}
+                <div className={clsx(showHistory && "hidden")}>
+                    {/* Mode Switcher, Input, etc. */}
+                     {/* Mode Switcher (Top Level) */}
             <div className="flex p-1 bg-slate-100 rounded-xl mb-4">
                 <button
                     onClick={() => handleModeChange(lastTuneModeRef.current || 'polite')}
@@ -273,11 +300,38 @@ export default function SidePanel() {
                     </>
                 )}
             </button>
+                </div>
 
-            {/* Output Section (Only distinct when there is output) */}
-            {output && (
-                <div className="mt-6 animate-in fade-in slide-in-from-bottom-2">
-                    <div className="flex items-center justify-between mb-2">
+                {/* History Panel */}
+                <div className={clsx(!showHistory && "hidden", "flex flex-col h-full")}>
+                    <div className="flex justify-between items-center mb-4">
+                        <h2 className="text-lg font-bold text-slate-700">{t.history}</h2>
+                        <button onClick={clearHistory} className="text-xs text-red-500 hover:text-red-700 flex items-center gap-1">
+                            <Trash2 size={12} /> {t.clearHistory}
+                        </button>
+                    </div>
+                    <div className="space-y-3 overflow-y-auto">
+                        {history.length > 0 ? history.map(item => (
+                            <div key={item.id} className="p-3 bg-white rounded-lg shadow-sm border border-slate-100 cursor-pointer hover:border-indigo-300"
+                                onClick={() => {
+                                    setInput(item.input);
+                                    setOutput(item.output);
+                                    setMode(item.mode);
+                                    setShowHistory(false);
+                                }}>
+                                <p className="text-xs text-slate-500 truncate">{item.input}</p>
+                                <p className="text-sm text-slate-800 font-medium mt-1">{item.output}</p>
+                            </div>
+                        )) : <p className="text-sm text-slate-400 text-center py-8">{t.noHistory}</p>}
+                    </div>
+                </div>
+            </div>
+
+            {/* This part remains outside the main p-4 for the sticky output */}
+            <div className={clsx("mt-auto p-4", showHistory && "hidden")}>
+                {output && (
+                    <div className="mt-6 animate-in fade-in slide-in-from-bottom-2">
+                         <div className="flex items-center justify-between mb-2">
                         <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
                             {mode === 'decode' ? t.honneMeaning : t.tatemaeResult}
                         </label>
@@ -292,8 +346,9 @@ export default function SidePanel() {
                     <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-xl text-sm text-slate-800 leading-relaxed shadow-sm relative group">
                         {output}
                     </div>
-                </div>
-            )}
+                    </div>
+                )}
+            </div>
         </div>
     );
 }
