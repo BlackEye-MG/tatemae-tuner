@@ -320,6 +320,27 @@ export default function SidePanel() {
                     </>
                 )}
             </button>
+
+            {/* Output Section */}
+            {output && (
+                <div className="mt-6 animate-in fade-in slide-in-from-bottom-2">
+                    <div className="flex items-center justify-between mb-2">
+                        <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                            {mode === 'decode' ? t.honneMeaning : t.tatemaeResult}
+                        </label>
+                        <button
+                            onClick={copyToClipboard}
+                            className="text-slate-400 hover:text-indigo-600 transition-colors"
+                            title="Copy to clipboard"
+                        >
+                            {copied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
+                        </button>
+                    </div>
+                    <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-xl text-sm text-slate-800 leading-relaxed shadow-sm relative group">
+                        {output}
+                    </div>
+                </div>
+            )}
                 </div>
 
                 {/* History Panel */}
@@ -339,35 +360,20 @@ export default function SidePanel() {
                                     setMode(item.mode);
                                     setShowHistory(false);
                                 }}>
-                                <p className="text-xs text-slate-500 truncate">{item.input}</p>
+                                <div className="flex justify-between items-center text-xs text-slate-500 mb-1">
+                                    <span className={clsx(
+                                        "px-2 py-0.5 rounded-full",
+                                        item.mode === 'decode' ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"
+                                    )}>
+                                        {item.mode === 'decode' ? t.decode : t[item.mode]}
+                                    </span>
+                                    <span className="truncate flex-1 text-right ml-2">{item.input}</span>
+                                </div>
                                 <p className="text-sm text-slate-800 font-medium mt-1">{item.output}</p>
                             </div>
                         )) : <p className="text-sm text-slate-400 text-center py-8">{t.noHistory}</p>}
                     </div>
                 </div>
-            </div>
-
-            {/* This part remains outside the main p-4 for the sticky output */}
-            <div className={clsx("mt-auto p-4", showHistory && "hidden")}>
-                {output && (
-                    <div className="mt-6 animate-in fade-in slide-in-from-bottom-2">
-                         <div className="flex items-center justify-between mb-2">
-                        <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                            {mode === 'decode' ? t.honneMeaning : t.tatemaeResult}
-                        </label>
-                        <button
-                            onClick={copyToClipboard}
-                            className="text-slate-400 hover:text-indigo-600 transition-colors"
-                            title="Copy to clipboard"
-                        >
-                            {copied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
-                        </button>
-                    </div>
-                    <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-xl text-sm text-slate-800 leading-relaxed shadow-sm relative group">
-                        {output}
-                    </div>
-                    </div>
-                )}
             </div>
         </div>
     );
