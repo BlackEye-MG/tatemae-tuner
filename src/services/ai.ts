@@ -28,18 +28,19 @@ export const getAIConfig = async (): Promise<AIConfig | null> => {
 import { generateCacheKey, getCachedResponse, setCachedResponse } from './cache';
 
 /**
- * Calls the AI Provider to generate the response.
+ * Calls the AI Provider to generate the response, supporting streaming.
  */
 export const tuneText = async (
     input: string,
     mode: 'casual' | 'polite' | 'formal' | 'kyoto' | 'decode',
-    config: AIConfig
-): Promise<string> => {
+    config: AIConfig,
+    onChunk: (text: string) => void
+): Promise<void> => {
     const systemPrompt = buildPrompt(input, mode);
 
     // Defaults
     const defaultOpenAI = 'gpt-4o-mini';
-    const defaultGemini = 'gemini-2.5-flash';
+    const defaultGemini = 'gemini-1.5-flash-latest'; // Use a known stable streaming model
 
     const modelToUse = config.modelId || (config.provider === 'openai' ? defaultOpenAI : defaultGemini);
 
@@ -50,29 +51,33 @@ export const tuneText = async (
     const cachedResult = await getCachedResponse(cacheKey);
     if (cachedResult) {
         console.log(`[Cache Hit] Serving ${mode} version from cache.`);
-        return cachedResult;
+        onChunk(cachedResult);
+        return;
     }
 
-    // 3. Call API
-    let result: string;
+    // 3. Call API and Stream
+    let fullResponse = "";
+    const handleChunk = (chunk: string) => {
+        fullResponse += chunk;
+        onChunk(chunk);
+    };
+
     if (config.provider === 'openai') {
-        result = await callOpenAI(systemPrompt, config.apiKey, modelToUse);
+        await callOpenAI(systemPrompt, config.apiKey, modelToUse, handleChunk);
     } else {
-        result = await callGemini(systemPrompt, config.apiKey, modelToUse);
+        await callGemini(systemPrompt, config.apiKey, modelToUse, handleChunk);
     }
 
-    // 4. Save to Cache (if successful return)
-    if (!result.startsWith("Error:")) {
-        await setCachedResponse(cacheKey, result);
+    // 4. Save to Cache after stream is complete
+    if (!fullResponse.startsWith("Error:")) {
+        await setCachedResponse(cacheKey, fullResponse.trim());
     }
-
-    return result;
 };
 
 /**
- * OpenAI API Caller
+ * OpenAI API Caller with Streaming
  */
-const callOpenAI = async (prompt: string, apiKey: string, model: string): Promise<string> => {
+const callOpenAI = async (prompt: string, apiKey: string, model: string, onChunk: (text: string) => void): Promise<void> => {
     try {
         const response = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
@@ -82,10 +87,9 @@ const callOpenAI = async (prompt: string, apiKey: string, model: string): Promis
             },
             body: JSON.stringify({
                 model: model,
-                messages: [
-                    { role: 'system', content: prompt }
-                ],
-                max_tokens: 300
+                messages: [{ role: 'system', content: prompt }],
+                max_tokens: 300,
+                stream: true // Enable streaming
             })
         });
 
@@ -94,22 +98,53 @@ const callOpenAI = async (prompt: string, apiKey: string, model: string): Promis
             throw new Error(error.error?.message || 'OpenAI API Request Failed');
         }
 
-        const data = await response.json();
-        return data.choices[0]?.message?.content?.trim() || "Error: No response generated.";
+        if (!response.body) {
+            throw new Error("No response body from OpenAI.");
+        }
 
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || ''; // Keep the last, possibly incomplete line
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const data = line.substring(6);
+                    if (data.trim() === '[DONE]') {
+                        return;
+                    }
+                    try {
+                        const parsed = JSON.parse(data);
+                        const chunk = parsed.choices?.[0]?.delta?.content;
+                        if (chunk) {
+                            onChunk(chunk);
+                        }
+                    } catch (e) {
+                        console.error("Failed to parse stream chunk:", e);
+                    }
+                }
+            }
+        }
     } catch (e: any) {
         console.error("OpenAI Call Failed", e);
-        throw new Error(e.message || "Failed to connect to OpenAI.");
+        onChunk(`Error: ${e.message || "Failed to connect to OpenAI."}`);
+        throw e; // Re-throw to be caught by the caller
     }
 }
 
 /**
- * Gemini API Caller
+ * Gemini API Caller with Streaming
  */
-const callGemini = async (prompt: string, apiKey: string, model: string): Promise<string> => {
+const callGemini = async (prompt: string, apiKey: string, model: string, onChunk: (text: string) => void): Promise<void> => {
     try {
-        // Use custom model ID or default to gemini-2.5-flash
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`;
 
         const response = await fetch(url, {
             method: 'POST',
@@ -118,9 +153,7 @@ const callGemini = async (prompt: string, apiKey: string, model: string): Promis
                 'x-goog-api-key': apiKey,
             },
             body: JSON.stringify({
-                contents: [{
-                    parts: [{ text: prompt }]
-                }]
+                contents: [{ parts: [{ text: prompt }] }]
             })
         });
 
@@ -129,11 +162,40 @@ const callGemini = async (prompt: string, apiKey: string, model: string): Promis
             throw new Error(error.error?.message || 'Gemini API Request Failed');
         }
 
-        const data = await response.json();
-        return data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "Error: No response generated.";
+        if (!response.body) {
+            throw new Error("No response body from Gemini.");
+        }
 
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const data = line.substring(6);
+                    try {
+                        const parsed = JSON.parse(data);
+                        const chunk = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+                        if (chunk) {
+                            onChunk(chunk);
+                        }
+                    } catch (e) {
+                        console.error("Failed to parse stream chunk:", e);
+                    }
+                }
+            }
+        }
     } catch (e: any) {
         console.error("Gemini Call Failed", e);
-        throw new Error(e.message || "Failed to connect to Google Gemini.");
+        onChunk(`Error: ${e.message || "Failed to connect to Google Gemini."}`);
+        throw e; // Re-throw to be caught by the caller
     }
 }

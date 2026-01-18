@@ -110,6 +110,7 @@ export default function SidePanel() {
     const handleTune = async () => {
         setError(null);
         setOutput('');
+        setIsLoading(true);
 
         try {
             // 1. Security Check
@@ -119,24 +120,32 @@ export default function SidePanel() {
             const config = await getAIConfig();
             if (!config) {
                 setError("Please set your API Key in the extension settings (Popup).");
+                setIsLoading(false);
                 return;
             }
 
-            setIsLoading(true);
-
-            // 3. Real API Call
-            const result = await tuneText(input, mode, config);
-            setOutput(result);
+            // 3. Real API Call (Streaming)
+            await tuneText(input, mode, config, (chunk) => {
+                if (chunk.startsWith("Error:")) {
+                    setError(chunk);
+                } else {
+                    setOutput((prev) => prev + chunk);
+                }
+            });
 
         } catch (err: any) {
             console.error("Sidepanel tune failed:", err);
-            if (err.message.includes("API Key")) {
-                setError("Invalid API Key. Please check your settings.");
-            } else if (err.message.includes("Failed to fetch")) {
-                setError("Network error. Could not connect to the AI service.");
-            }
-            else {
-                setError("An unexpected error occurred. Please try again.");
+            // The streaming function `tuneText` now throws errors after sending an error chunk.
+            // We can use that chunk to set the error state, so we might not need generic messages here
+            // unless the throw happens before any chunk is sent (e.g., network error).
+            if (!error) { // Only set a generic error if a specific one hasn't been streamed
+                if (err.message.includes("API Key")) {
+                    setError("Invalid API Key. Please check your settings.");
+                } else if (err.message.includes("Failed to fetch")) {
+                    setError("Network error. Could not connect to the AI service.");
+                } else {
+                    setError("An unexpected error occurred. Please try again.");
+                }
             }
         } finally {
             setIsLoading(false);
