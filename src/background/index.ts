@@ -16,28 +16,19 @@ chrome.runtime.onInstalled.addListener(() => {
     });
 });
 
-// Handle Context Menu Clicks
-chrome.contextMenus.onClicked.addListener((info, tab) => {
-    if ((info.menuItemId === "decode-tatemae" || info.menuItemId === "tune-tatemae") && info.selectionText) {
-        // OPEN LOGIC:
-        // 1. Open Side Panel Synchronously (Required for User Gesture)
-        // @ts-ignore
-        if (chrome.sidePanel && chrome.sidePanel.open) {
-            // @ts-ignore
-            chrome.sidePanel.open({ windowId: tab?.windowId });
-        }
+// Handle OPEN_SETTINGS message
 
-        // 2. Save Action to Storage (Handoff)
-        // The side panel will read this from storage on mount (or via change listener).
-        const actionType = info.menuItemId === "decode-tatemae" ? 'DECODE_SELECTION' : 'TUNE_SELECTION';
+chrome.runtime.onMessage.addListener((message, _sender, _sendResponse) => {
 
-        chrome.storage.local.set({
-            pendingAction: {
-                type: actionType,
-                text: info.selectionText,
-                timestamp: Date.now()
-            }
-        });
+    if (message.type === "OPEN_SETTINGS") {
+
+        chrome.runtime.openOptionsPage();
+
     }
+
 });
+
+
+
+
 

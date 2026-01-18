@@ -33,6 +33,11 @@ export const translations = {
         history: "History",
         clearHistory: "Clear",
         noHistory: "No history yet.",
+        apiKeyMissingError: "Please set your API Key in the extension settings.",
+        apiKeyInvalidError: "Invalid API Key. Please check your settings.",
+        openSettings: "Open Settings",
+        networkError: "Network error. Could not connect to the AI service.",
+        unexpectedError: "An unexpected error occurred. Please try again.",
 
         // Modes
         casual: "Casual",
@@ -70,6 +75,11 @@ export const translations = {
         history: "履歴",
         clearHistory: "消去",
         noHistory: "履歴はありません。",
+        apiKeyMissingError: "APIキーを拡張機能の設定で入力してください。",
+        apiKeyInvalidError: "APIキーが無効です。設定を確認してください。",
+        openSettings: "設定を開く",
+        networkError: "ネットワークエラー。AIサービスに接続できませんでした。",
+        unexpectedError: "予期せぬエラーが発生しました。もう一度お試しください。",
 
         // Modes
         casual: "カジュアル",

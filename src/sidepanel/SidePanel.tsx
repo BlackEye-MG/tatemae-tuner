@@ -17,7 +17,7 @@ export default function SidePanel() {
     const [input, setInput] = useState('');
     const [mode, setMode] = useState<'casual' | 'polite' | 'formal' | 'kyoto' | 'decode'>('polite');
     const [output, setOutput] = useState('');
-    const [error, setError] = useState<string | null>(null);
+    const [error, setError] = useState<React.ReactNode | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [copied, setCopied] = useState(false);
     const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -45,6 +45,12 @@ export default function SidePanel() {
             return newHistory;
         });
     };
+
+    const openSettings = () => {
+        if (chrome.runtime) {
+            chrome.runtime.sendMessage({ type: "OPEN_SETTINGS" });
+        }
+    };
     
     const handleTune = async () => {
         setError(null);
@@ -56,7 +62,14 @@ export default function SidePanel() {
             validateInput(input);
             const config = await getAIConfig();
             if (!config) {
-                setError("Please set your API Key in the extension settings (Popup).");
+                setError(
+                    <span>
+                        {t.apiKeyMissingError}{' '}
+                        <a href="#" className="underline" onClick={openSettings}>
+                            {t.openSettings}
+                        </a>
+                    </span>
+                );
                 setIsLoading(false);
                 return;
             }
@@ -79,11 +92,18 @@ export default function SidePanel() {
             console.error("Sidepanel tune failed:", err);
             if (!error) {
                 if (err.message.includes("API Key")) {
-                    setError("Invalid API Key. Please check your settings.");
+                    setError(
+                        <span>
+                            {t.apiKeyInvalidError}{' '}
+                            <a href="#" className="underline" onClick={openSettings}>
+                                {t.openSettings}
+                            </a>
+                        </span>
+                    );
                 } else if (err.message.includes("Failed to fetch")) {
-                    setError("Network error. Could not connect to the AI service.");
+                    setError(t.networkError);
                 } else {
-                    setError("An unexpected error occurred. Please try again.");
+                    setError(t.unexpectedError);
                 }
             }
         } finally {
